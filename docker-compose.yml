@@ -1,0 +1,116 @@
+version: "3"
+services:
+  postgres:
+    image: postgres:latest
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB1: directus
+      POSTGRES_DB2: keycloak
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB1 && pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB2" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - ./create-databases.sh:/docker-entrypoint-initdb.d/create-databases.sh
+
+  keycloak:
+    build:
+      context: ./keycloak
+      dockerfile: Dockerfile
+    ports:
+      - 8080:8080
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB_USERNAME: admin
+      KC_DB_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL_HOST: postgres
+      KC_HOSTNAME_URL: 
+      KC_PROXY: edge
+      KC_HOSTNAME_STRICT: false
+      KC_HOSTNAME_STRICT_HTTPS: false
+      KC_HTTP_ENABLED: true
+      KC_HOSTNAME_DEBUG: true
+      KC_HEALTH_ENABLED: true
+    healthcheck:
+      test: ["CMD-SHELL", 'exec 3<>/dev/tcp/localhost/8080 && echo -e "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 || exit 1']
+      start_period: 15s
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./init-keycloak.sh:/docker-entrypoint-initdb.d/init-keycloak.sh
+
+  directus:
+    image: directus/directus:latest
+    ports:
+      - 8055:8055
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    environment:
+      ADMIN_EMAIL: admin@example.com
+      ADMIN_PASSWORD: admin
+      HOST: 0.0.0.0
+      PORT: 8055
+      PUBLIC_URL: 
+      DB_CLIENT: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: directus
+      DB_USER: admin
+      DB_PASSWORD: admin
+      DB_SSL: false
+      RATE_LIMITER_ENABLED: false
+      RATE_LIMITER_STORE: memory
+      RATE_LIMITER_POINTS: 25
+      RATE_LIMITER_DURATION: 1
+      CACHE_ENABLED: false
+      CACHE_STORE: memory
+      ASSETS_CACHE_TTL: "30d"
+      CORS_ENABLED: true
+      CORS_ORIGIN: true
+      CORS_METHODS: "GET,POST,PATCH,DELETE"
+      CORS_ALLOWED_HEADERS: "Content-Type,Authorization"
+      CORS_EXPOSED_HEADERS: "Content-Range"
+      CORS_CREDENTIALS: true
+      CORS_MAX_AGE: 18000
+      KEY: "576acf6f-e118-4b27-98c9-83136b17b282"
+      SECRET: "1cgSyCqmstShcd3hZxK57KJrlKpr8KTT"
+      ACCESS_TOKEN_TTL: 15m
+      REFRESH_TOKEN_TTL: 7d"
+      REFRESH_TOKEN_COOKIE_SECURE: false
+      REFRESH_TOKEN_COOKIE_SAME_SITE: None
+      REFRESH_TOKEN_COOKIE_DOMAIN: 
+      AUTH_PROVIDERS: "keycloak"
+      AUTH_KEYCLOAK_DRIVER: openid
+      AUTH_KEYCLOAK_CLIENT_ID: directus
+      AUTH_KEYCLOAK_CLIENT_SECRET: bqYX5RRQMW9Kt7aEzAdR60JRqFSm8d9L
+      AUTH_KEYCLOAK_ISSUER_URL: "http://keycloak:8080/realms/master/.well-known/openid-configuration"
+      AUTH_KEYCLOAK_IDENTIFIER_KEY: email
+      AUTH_KEYCLOAK_ALLOW_PUBLIC_REGISTRATION: true
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://0.0.0.0:8055/server/health || exit 1
+      start_period: 15s
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    depends_on:
+      directus:
+        condition: service_healthy
+    ports:
+      - "80:80"
